@@ -23,6 +23,13 @@ struct PhysicalDeviceSupportIndices {
 	}
 };
 
+struct SurfaceAndPresentProperties {
+	VkSurfaceCapabilitiesKHR surfaceCapabilities;
+	std::vector<VkSurfaceFormatKHR> surfaceFormats;
+	std::vector<VkPresentModeKHR> presentModes;
+};
+
+
 class App {
 private:
 	GLFWwindow* window;
@@ -36,41 +43,90 @@ private:
 	const uint32_t WIDTH = 800;
 	const uint32_t HEIGHT = 600;
 
+	const std::vector<const char*> requiredDeviceExtensions = {
+		VK_KHR_SWAPCHAIN_EXTENSION_NAME
+	};
 public:
 	App() : window(nullptr), physicalDevice(VK_NULL_HANDLE) {}
 
 private:
+	std::optional<std::vector<const char*>> getRequiredExtensions(const std::vector<VkExtensionProperties> &availableExtensions, const std::vector<const char*> &requiredExtensionNames, std::string type="*") {
+		std::cout << "Available " << type << " Extensions:" << std::endl;
+		for (auto& extension : availableExtensions) {
+			std::cout << extension.extensionName << std::endl;
+		}
+		std::cout << std::endl;
 
-	bool areExtensionsSupported(const char **supplementalExtensions, uint32_t count) {
+		std::cout << "Required " << type << " Extensions:" << std::endl;
+		for (auto& extensionName : requiredExtensionNames) {
+			std::cout << extensionName << std::endl;
+		}
+		std::cout << std::endl;
+
+		std::vector<const char*> extensionsFound;
+		std::vector<const char*> extensionsMissing;
+
+		for (const auto& requiredExtensionName : requiredExtensionNames) {
+			uint32_t i = 0;
+			while (i < availableExtensions.size()) {
+				if (std::strcmp(requiredExtensionName, availableExtensions[i].extensionName) == 0) {
+					extensionsFound.push_back(requiredExtensionName);
+					break;
+				}
+				++i;
+			}
+			if (i == availableExtensions.size()) {
+				extensionsMissing.push_back(requiredExtensionName);
+			}
+		}
+
+		std::cout << "Found " << type << " Extensions:" << std::endl;
+		for (const auto& extension : extensionsFound) {
+			std::cout << extension << std::endl;
+		}
+		std::cout << std::endl;
+
+		std::cout << "Missing " << type << " Extensions:" << std::endl;
+		for (const auto& extension : extensionsMissing) {
+			std::cout << extension << std::endl;
+		}
+		std::cout << std::endl;
+
+		if (extensionsFound.size() == requiredExtensionNames.size()) {
+			return { extensionsFound };
+		}
+		return {};
+	}
+
+	std::optional<std::vector<const char*>> getRequiredInstanceExtensions() {
 		/*
-		 * Get complete extension list.
+		 * Get complete instance extension list and place all available instances into a vector.
 		 */
 		uint32_t availableExtensionCount = 0;
 		vkEnumerateInstanceExtensionProperties(nullptr, &availableExtensionCount, nullptr);
 		std::vector<VkExtensionProperties> availableExtensions(availableExtensionCount);
 		vkEnumerateInstanceExtensionProperties(nullptr, &availableExtensionCount, availableExtensions.data());
 
-		std::cout << availableExtensionCount << " Available Extensions:" << std::endl;
-		for (const auto& extension : availableExtensions) {
-			std::cout << extension.extensionName << std::endl;
-		}
+		/*
+		* Place all required extensions names from glfw into a vector.
+		*/
 
-		bool return_value = false;
-		for (uint32_t i = 0; i < count; ++i) {
-			return_value = false;
-			for (const auto& extension : availableExtensions) {
-				if (strcmp(supplementalExtensions[i], extension.extensionName) == 0) {					
-					return_value = true;
-					break;
-				}
-			}
+		uint32_t requiredExtensionNameCount = 0;
+		const char** requiredExtensionNames_pp;
+		requiredExtensionNames_pp = glfwGetRequiredInstanceExtensions(&requiredExtensionNameCount);
 
-			if (return_value == false) {
-				std::cout << supplementalExtensions[i] << " is unsupported." << std::endl;
-				break;
-			}
-		}
-		return (return_value);
+		std::vector<const char *> requiredExtensionNames(requiredExtensionNames_pp, requiredExtensionNames_pp+ requiredExtensionNameCount);
+
+		return getRequiredExtensions(availableExtensions, requiredExtensionNames, "Instance");
+	}
+
+	std::optional<std::vector<const char *>> getRequiredDeviceExtensions(VkPhysicalDevice physicalDevice) {
+		uint32_t availableExtensionCount = 0;
+		vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &availableExtensionCount, nullptr);
+		std::vector<VkExtensionProperties> availableExtensions(availableExtensionCount);
+		vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &availableExtensionCount, availableExtensions.data());
+
+		return getRequiredExtensions(availableExtensions, requiredDeviceExtensions, "Device");
 	}
 
 	void initInstance() {
@@ -96,33 +152,19 @@ private:
 		VkInstanceCreateInfo instanceCreateInfo{};
 
 		/*
-		 * Get and setup extensions
-		 */
-
-		 /*
-		  * Get required extensions for minimal windows functionality.
-		  */
-		uint32_t requiredExtensionNameCount = 0;
-		const char** requiredExtensionNames;
-		requiredExtensionNames = glfwGetRequiredInstanceExtensions(&requiredExtensionNameCount);
-
-		std::cout << "Required Extensions:" << std::endl;
-		for (uint32_t i = 0; i < requiredExtensionNameCount; ++i) {
-			std::cout << requiredExtensionNames[i] << std::endl;
-		}
-
-		/*
 		 * If the required extensions are unsupported then exit.
 		 */
-		if (!areExtensionsSupported(requiredExtensionNames, requiredExtensionNameCount)) {
-			throw std::runtime_error("Required extensions are unsupported!");
+		std::optional<std::vector<const char *>> optional = getRequiredInstanceExtensions();
+		if (!optional.has_value()) {
+			throw std::runtime_error("Required instance extensions are unsupported!");
 		}
+
 
 		/**
 		 * Use the required extensions.
 		 */
-		instanceCreateInfo.enabledExtensionCount = requiredExtensionNameCount;
-		instanceCreateInfo.ppEnabledExtensionNames = requiredExtensionNames;
+		instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(optional.value().size());
+		instanceCreateInfo.ppEnabledExtensionNames = optional.value().data();
 
 
 		//instanceCreateInfo.enabledLayerCount;
@@ -146,6 +188,44 @@ private:
 		vkDestroyInstance(instance, nullptr);
 	}
 
+	/*
+	bool isPhysicalDeviceExtensionsSuitable(VkPhysicalDevice physicalDevice) {
+		uint32_t extensionPropertiesCount;
+		vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionPropertiesCount, nullptr);
+		std::vector<VkExtensionProperties> extensionProperties(extensionPropertiesCount);
+		vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &extensionPropertiesCount, extensionProperties.data());
+
+		std::set<std::string> requiredExtensionsSet(requiredDeviceExtensions.begin(), requiredDeviceExtensions.end());
+		for (const auto& extension : extensionProperties) {
+			requiredExtensionsSet.erase(extension.extensionName);
+		}
+
+		*
+		 * If all requiredExtensions are found then this set should be empty.
+		 *
+		return requiredExtensionsSet.empty();
+	}*/
+
+	
+	bool isPhysicalDeviceSuitable(VkPhysicalDevice physicalDevice) {
+		VkPhysicalDeviceProperties physicalDeviceProperties;
+		vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
+		VkPhysicalDeviceFeatures physicalDeviceFeatures;
+		vkGetPhysicalDeviceFeatures(physicalDevice, &physicalDeviceFeatures);
+		/*
+		 * https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkPhysicalDeviceType.html#_description
+		 */
+		auto index = getSupportedGraphicsQueueIndex(physicalDevice);
+		bool physicalDeviceSuitable = !(getRequiredDeviceExtensions(physicalDevice).has_value());
+		//bool physicalDeviceSuitable = isPhysicalDeviceExtensionsSuitable(physicalDevice);
+		if (physicalDeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
+			physicalDeviceFeatures.geometryShader &&
+			index.isComplete() && physicalDeviceSuitable) {
+			return true;
+		}
+		return false;
+	}
+
 
 	void selectPhysicalDevices() {
 		/*
@@ -164,17 +244,7 @@ private:
 		 * Iterate through devices and select the most suitable device(s) for use.
 		 */
 		for (const auto& device : physicalDevices) {
-			VkPhysicalDeviceProperties physicalDeviceProperties;
-			vkGetPhysicalDeviceProperties(device, &physicalDeviceProperties);
-			VkPhysicalDeviceFeatures physicalDeviceFeatures;
-			vkGetPhysicalDeviceFeatures(device, &physicalDeviceFeatures);
-			/*
-			 * https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkPhysicalDeviceType.html#_description
-			 */
-			auto index = getSupportedGraphicsQueueIndex(device);
-			if (physicalDeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && 
-				physicalDeviceFeatures.geometryShader &&
-				index.has_value()) {
+			if (isPhysicalDeviceSuitable(device)) {
 				physicalDevice = device;
 				break;
 			}
@@ -235,7 +305,21 @@ private:
 		deviceCreateInfo.queueCreateInfoCount = static_cast<uint32_t>(deviceQueueCreateInfos.size());
 		deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
 		
-		deviceCreateInfo.enabledExtensionCount = 0;
+		/*
+		 * If the required extensions are unsupported then exit.
+		 */
+		std::optional<std::vector<const char*>> optional = getRequiredDeviceExtensions(physicalDevice);
+		if (!optional.has_value()) {
+			throw std::runtime_error("Required device extensions are unsupported!");
+		}
+
+		/**
+		 * Use the required extensions.
+		 */
+		deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(optional.value().size());
+		deviceCreateInfo.ppEnabledExtensionNames = optional.value().data();
+
+
 		deviceCreateInfo.enabledLayerCount = 0;
 
 		if (vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &logicalDevice) != VK_SUCCESS) {
@@ -253,6 +337,7 @@ private:
 		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 
 		initInstance();
+		createWindowSurface();
 		selectPhysicalDevices();
 		createLogicalDevice();
 	}
